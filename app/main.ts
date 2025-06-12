@@ -15,6 +15,7 @@ const getTableName = async (recordPtr: number, databaseFileHandler: FileHandle):
     const recordHeaderSize = new DataView(buffer.buffer, 0, buffer.byteLength).getUint8(2);
     const type = new DataView(buffer.buffer, 0, buffer.byteLength).getUint8(3);
     const name = new DataView(buffer.buffer, 0, buffer.byteLength).getUint8(4);
+    // console.log(`type: ${type}, name: ${name}`);
     const tblName = new DataView(buffer.buffer, 0, buffer.byteLength).getUint8(5);
     const recordBodyPtr = recordHeaderSize + 2;
     const tableNameOffset = ((type - 13) / 2) + ((name - 13) / 2);
@@ -46,17 +47,24 @@ if (command === ".dbinfo") {
 } else if (command === '.tables') {
     const databaseFileHandler = await open(databaseFilePath, constants.O_RDONLY);
     let buffer: Uint8Array = new Uint8Array(4);
-    await databaseFileHandler.read(buffer, 0, buffer.length, 112);
-    const cellPtrArray = new DataView(buffer.buffer, 0, buffer.byteLength).getUint16(0);
     await databaseFileHandler.read(buffer, 0, buffer.length, 103);
     const tableSize = new DataView(buffer.buffer, 0, buffer.byteLength).getUint16(0);
-    let newRecordPtr = cellPtrArray
+    buffer = new Uint8Array(2 * tableSize);
+    await databaseFileHandler.read(buffer, 0, buffer.length, 108);
+    const cellPtrArray = [];
+    for (let i = 0; i < tableSize; i++) {
+        cellPtrArray.push(new DataView(buffer.buffer, i * 2, 2).getUint16(0));
+    }
+    // console.log(`cell pointers: ${cellPtrArray.join(' ')}`);
+    // const cellPtrArray = new DataView(buffer.buffer, 0, buffer.byteLength).getUint16(0);
+    let newRecordPtr = 0
     const tableNames = [];
     let tableName = ''
     for (let i = 0; i < tableSize; i++) {
-        [newRecordPtr, tableName] = await getTableName(newRecordPtr, databaseFileHandler);
+        [newRecordPtr, tableName] = await getTableName(cellPtrArray[i], databaseFileHandler);
         newRecordPtr += 2;
         tableNames.push(tableName);
+        // console.log(`table name: ${tableName}`);
     }
     console.log(tableNames.filter((name) => name !== 'sqlite_sequence').join(' '));
 } else {
