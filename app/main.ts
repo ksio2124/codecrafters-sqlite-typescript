@@ -7,15 +7,18 @@ const command: string = args[3];
 
 if (command === ".dbinfo") {
     const databaseFileHandler = await open(databaseFilePath, constants.O_RDONLY);
-    const buffer: Uint8Array = new Uint8Array(100);
+    const buffer: Uint8Array = new Uint8Array(105);
     await databaseFileHandler.read(buffer, 0, buffer.length, 0);
 
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
+    // You can use print statements as follows for0 debugging, they'll be visible when running tests.
     console.error("Logs from your program will appear here!");
 
     // Uncomment this to pass the first stage    
     const pageSize = new DataView(buffer.buffer, 0, buffer.byteLength).getUint16(16);
+    // const numberOfTables = new DataView(
     console.log(`database page size: ${pageSize}`);
+    const tableSize = new DataView(buffer.buffer, 0, buffer.byteLength).getUint16(103);
+    console.log(`number of tables: ${tableSize}`)
 
     await databaseFileHandler.close();
 } else {
