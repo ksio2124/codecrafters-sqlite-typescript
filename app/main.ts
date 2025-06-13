@@ -161,7 +161,7 @@ if (command === ".dbinfo") {
   console.log(`number of tables: ${database.tableSize}`);
 } else if (command === ".tables") {
   console.log(database.tables.map((table) => table.name).join(" "));
-} else if (command.startsWith("SELECT COUNT(*) FROM")) {
+} else if (command.toUpperCase().startsWith("SELECT COUNT(*) FROM")) {
   const tableName = command.split(" ").at(-1);
   const table = database.tables.filter((table) => table.name === tableName)[0];
   console.log(await table.getNumberOfRows());
