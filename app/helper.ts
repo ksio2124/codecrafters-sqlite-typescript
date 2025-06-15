@@ -12,8 +12,6 @@ export function parseSQLiteVarints32(buffer: Uint8Array) {
   const view = new DataView(buffer.buffer);
   const result = [];
   let offset = 0;
-  // console.log('bytelength', buffer.byteLength)
-  // console.log(buffer);
   while (offset < buffer.byteLength) {
     let value = 0;
     let bytesRead = 0;
@@ -34,7 +32,6 @@ export function parseSQLiteVarints32(buffer: Uint8Array) {
     }
 
     result.push({ value, offset, bytesRead });
-    // result.push(value)
     offset += bytesRead;
   }
 
