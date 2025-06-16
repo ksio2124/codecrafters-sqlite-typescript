@@ -26,18 +26,17 @@ export class Row {
     let cursor = endOfRecordHeader;
     let count = 0;
     const columnNames = this.table.getColumnNames(this.table.sql!).slice(1);
-      while (count < res.length) {
-        const size = Table.getSizeFromSerialType(res[count].value).length;
-        const value = this.table.decoder.decode(
-          new DataView(this.cellBuffer.buffer, cursor, size)
-        );
-        const columnName = columnNames[count];
-        this.content[columnName] = value;
-        cursor += size;
-        count++;
-      }
+    while (count < res.length) {
+      const size = Table.getSizeFromSerialType(res[count].value).length;
+      const value = this.table.decoder.decode(
+        new DataView(this.cellBuffer.buffer, cursor, size)
+      );
+      const columnName = columnNames[count];
+      this.content[columnName] = value;
+      cursor += size;
+      count++;
+    }
+    this.content['id'] = this.rowId;
     return cursor;
   }
-
-
 }
