@@ -40,7 +40,6 @@ if (parsed[0] === ".dbinfo") {
   // console.log(filterkey, filterVal)
   const tables = database.tables.filter(table => table.name === tableName);
   const rows = await tables[0].getAllRows();
-
   rows.forEach(row => {
     const output: string[] = [];
     if (row.content[filterkey] !== filterVal) {
