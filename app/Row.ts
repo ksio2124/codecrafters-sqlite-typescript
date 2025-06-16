@@ -23,11 +23,9 @@ export class Row {
     const endOfRecordHeader = recordHeaderSize!;
     const recordHeaderBuffer = this.cellBuffer.slice(2, endOfRecordHeader);
     let res = parseSQLiteVarints32(recordHeaderBuffer);
-    // res = res.slice(2, res.length);
     let cursor = endOfRecordHeader;
     let count = 0;
     const columnNames = this.table.getColumnNames(this.table.sql!).slice(1);
-    // console.log(columnNames);/
       while (count < res.length) {
         const size = Table.getSizeFromSerialType(res[count].value).length;
         const value = this.table.decoder.decode(
@@ -38,7 +36,6 @@ export class Row {
         cursor += size;
         count++;
       }
-    // console.log(this.content)
     return cursor;
   }
 

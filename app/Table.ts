@@ -211,30 +211,18 @@ export class Table {
     const pageBuffer = await this.getPageBuffer(pageNum);
     const view = new DataView(pageBuffer.buffer, 0, pageBuffer.byteLength);
     const numberOfRows = view.getUint16(Table.LEAF_PAGE_NUMBER_OF_CELL.position);
-    // console.log('numberOfRows:', numberOfRows)
-    // const cellContentAreaPtr = view.getUint16(Table.LEAF_PAGE_CELL_CONTENT_AREA.position);
     const cellPtrs = [];
     for (let i = 0; i < numberOfRows; i++) {
       const cellOffset = view.getInt16(8 + i * 2);
       cellPtrs.push(cellOffset);
     }
-    let offset = 0;
-    let count = 0;
     for (let i = 0; i < cellPtrs.length; i++) {
-    // while (count < cellPtrs.length) {
       const [cellRecordSize, rowId] = parseSQLiteVarints32(pageBuffer.slice(cellPtrs[i], cellPtrs[i] + 18));
       const cellHeaderOffset = cellRecordSize.bytesRead + rowId.bytesRead;
       const row = new Row(this, rowId.value, pageBuffer.slice(cellPtrs[i] + cellHeaderOffset )) 
       row.init();
-      // let cellRecordSize = new DataView(pageBuffer.buffer, cellContentAreaPtr + offset, 1).getUint8(0);
-      // let rowId = new DataView(pageBuffer.buffer, cellContentAreaPtr + offset + Table.LEAF_PAGE_CELL_ROW_ID.position, Table.LEAF_PAGE_CELL_ROW_ID.size).getUint8(0);      
-      // let row = new Row(this, rowId, pageBuffer.slice(cellContentAreaPtr + offset, cellContentAreaPtr + offset + cellRecordSize + 2));
-      // offset += row.init();
-      // count++;
       this.rows.push(row)
     }
-    // console.log('done')
-    // this.rows.map(row => console.log(row.content))
     return this.rows;
   }
 
@@ -246,7 +234,7 @@ export class Table {
       await this.getAllRowsFromPage(this.rootPage!)
     } else {
       for (let i = 0; i < allPages.length; i++) {
-        console.log('pageNum', allPages[i][0])
+        // console.log('pageNum', allPages[i][0])
         await this.getAllRowsFromPage(allPages[i][0])
       }
     }
