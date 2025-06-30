@@ -2,7 +2,7 @@ import { open } from "fs/promises";
 import { constants } from "fs";
 import type { FileHandle } from "fs/promises";
 
-import {Table} from './Table'
+import { Table } from './Table'
 export class Database {
   databaseFileHandler?: FileHandle;
   pageSize?: number;
@@ -67,5 +67,17 @@ export class Database {
       await table.init();
       this.tables.push(table);
     }
+  }
+
+  async getPageBuffer(pageNum: number): Promise<Uint8Array> {
+    if (!this.checkInit()) {
+      throw new Error("Database not initialized. Call init() first.");
+    }
+    const databaseFileHandler = this.databaseFileHandler;
+    const buffer = new Uint8Array(this.pageSize);
+    const offset = (pageNum - 1) * this.pageSize;
+    // console.log('database', pageNum, offset)
+    await databaseFileHandler.read(buffer, 0, buffer.length, offset);
+    return buffer;
   }
 }

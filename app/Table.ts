@@ -1,7 +1,12 @@
-import {Database} from './Database'
+import { Database } from './Database'
 import type { FileHandle } from 'fs/promises';
 import { Row } from './Row';
 import { decodeVarint, parseSQLiteVarints32 } from './helper';
+import { IndexInteriorCell } from './IndexCell';
+import { INDEX_INTERIOR_PAGE, INDEX_LEAF_PAGE, PAGE_TYPE, TABLE_INTERIOR_PAGE, TABLE_LEAF_PAGE } from './const';
+import { IndexInteriorPage, IndexLeafPage } from './IndexPage';
+import { RecordBody } from './Payload';
+import { TableInteriorPage, TableLeafPage } from './TablePage';
 
 export class Table {
   name?: string;
@@ -11,14 +16,15 @@ export class Table {
   sql?: string;
   record?: Uint8Array;
   recordBodyPtr?: number;
-  type?:string;
-  tblName?:string;
-  decoder:TextDecoder;
+  type?: string;
+  tblName?: string;
+  decoder: TextDecoder;
   rows: Row[];
   recordHeaderPtr?: number;
-  static LEAF_PAGE_NUMBER_OF_CELL = {position: 3, size: 2};
-  static LEAF_PAGE_CELL_CONTENT_AREA = {position: 5, size: 2};
-  static LEAF_PAGE_CELL_ROW_ID = {position: 2, size: 1};
+  isIndex: boolean;
+  static LEAF_PAGE_NUMBER_OF_CELL = { position: 3, size: 2 };
+  static LEAF_PAGE_CELL_CONTENT_AREA = { position: 5, size: 2 };
+  static LEAF_PAGE_CELL_ROW_ID = { position: 2, size: 1 };
   static LEAF_PAGE = 13;
   static INTERIOR_PAGE = 5;
   constructor(recordPtr: number, database: Database) {
@@ -26,6 +32,7 @@ export class Table {
     this.database = database;
     this.decoder = new TextDecoder();
     this.rows = [];
+    this.isIndex = false;
   }
 
   async init(): Promise<void> {
@@ -36,13 +43,13 @@ export class Table {
       this.database.databaseFileHandler
     );
     const parsed = parseSQLiteVarints32(this.record)
-    const [_,skip, recordHeaderSize, schemaType, nameType, tblNameType]= parsed;
+    const [_, skip, recordHeaderSize, schemaType, nameType, tblNameType] = parsed;
     this.recordBodyPtr = this.recordHeaderPtr + recordHeaderSize.value;
     const schemaTypeSize = Table.getSizeFromSerialType(schemaType.value).length;
     const nameTypeSize = Table.getSizeFromSerialType(nameType.value).length;
     const namePosition = this.recordBodyPtr + schemaTypeSize;
     const nameBuffer = new DataView(this.record.buffer, namePosition, nameTypeSize);
-    
+
     this.name = this.decoder.decode(nameBuffer);
     const tblNameSize = Table.getSizeFromSerialType(tblNameType.value).length;
     const rootPagePosition = this.recordBodyPtr + schemaTypeSize + nameTypeSize + tblNameSize;
@@ -97,8 +104,8 @@ export class Table {
     if (serialType === 3) {
       // 3-byte int
       const val = (dataView.getUint8(offset) << 16) |
-                  (dataView.getUint8(offset + 1) << 8) |
-                  dataView.getUint8(offset + 2);
+        (dataView.getUint8(offset + 1) << 8) |
+        dataView.getUint8(offset + 2);
       // convert to signed
       const signed = val & 0x800000 ? val | 0xff000000 : val;
       return { value: signed, length: 3 };
@@ -125,7 +132,7 @@ export class Table {
     }
     return { value: undefined, length: 0 };
   }
-  
+
 
   async getRecord(databaseFileHandler: FileHandle): Promise<[Uint8Array, number]> {
     let buffer: Uint8Array = new Uint8Array(9);
@@ -173,7 +180,7 @@ export class Table {
         const rowIdStart = cellPtrs[i] + 4;
         const rowIdEnd = rowIdStart + 9
         const rowIdBuffer = pageBuffer.slice(rowIdStart, rowIdEnd);
-        const rowId =  parseSQLiteVarints32(rowIdBuffer)[0].value;
+        const rowId = parseSQLiteVarints32(rowIdBuffer)[0].value;
         pages.push([pageNum, rowId]);
       }
       for (let i = 0; i < pages.length; i++) {
@@ -190,7 +197,7 @@ export class Table {
     return true;
   }
 
-  
+
   async getPageBuffer(pageNum: number) {
     if (!this.database.checkInit()) {
       throw new Error("Database not initialized. Call init() first.");
@@ -219,13 +226,105 @@ export class Table {
     for (let i = 0; i < cellPtrs.length; i++) {
       const [cellRecordSize, rowId] = parseSQLiteVarints32(pageBuffer.slice(cellPtrs[i], cellPtrs[i] + 18));
       const cellHeaderOffset = cellRecordSize.bytesRead + rowId.bytesRead;
-      const row = new Row(this, rowId.value, pageBuffer.slice(cellPtrs[i] + cellHeaderOffset )) 
+      const row = new Row(this, rowId.value, pageBuffer.slice(cellPtrs[i] + cellHeaderOffset))
       row.init();
       this.rows.push(row)
     }
     return this.rows;
   }
 
+  async getRecordOnIdsHelper(ids: number[], idsIdx: number, res: RecordBody[], pageNum: number, leftVal = 0) {
+    const pageBuffer = await this.database.getPageBuffer(pageNum);
+    const pageView = new DataView(pageBuffer.buffer);
+    const pageType = pageView.getUint8(PAGE_TYPE.offset)
+    let idsIdx2 = idsIdx;
+    if (pageType === TABLE_INTERIOR_PAGE) {
+      const page = new TableInteriorPage(pageBuffer);
+      const cells = page.getCells();
+      let lowestVal = leftVal;
+      let rowId = cells[0].getRowId().value;
+      for (let i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        rowId = cell.getRowId().value;
+        if (ids[idsIdx2] <= rowId && ids[idsIdx2] >= lowestVal) {
+          const { idsIdx2: newIdsIdx2 } = await this.getRecordOnIdsHelper(ids, idsIdx2, res, cell.getLeftChildPageNum(), rowId);
+          idsIdx2 = newIdsIdx2;
+        }
+        lowestVal = rowId;
+      }
+      if (ids[idsIdx2] >= rowId) {
+        const nextPage = page.getRightMostPageNum();
+        const { idsIdx2: newIdsIdx2 } = await this.getRecordOnIdsHelper(ids, idsIdx2, res, nextPage, rowId);
+        idsIdx2 = newIdsIdx2;
+      }
+    } else if (pageType === TABLE_LEAF_PAGE) {
+      const page = new TableLeafPage(pageBuffer);
+      const cells = page.getCells();
+      for (let i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        const rowId = cell.rowId;
+        if (rowId === ids[idsIdx2]) {
+          res.push(cell.payload.recordBody);
+          idsIdx2++;
+        }
+      }
+    }
+
+    return { res, idsIdx2 };
+  }
+
+
+
+  // assume id is sorted from smallest to greatest
+  async getRecordOnIds(ids: number[]) {
+    return await this.getRecordOnIdsHelper(ids, 0, [], this.rootPage!);
+  }
+
+
+
+  async getMatchingIndexHelper(value: string, leftVal: string, res: number[], pageNum: number) {
+    const pageBuffer = await this.database.getPageBuffer(pageNum);
+    const pageView = new DataView(pageBuffer.buffer);
+    const pageType = pageView.getUint8(PAGE_TYPE.offset)
+    if (pageType === INDEX_INTERIOR_PAGE) {
+      const page = new IndexInteriorPage(pageBuffer);
+      const cells = page.getCells();
+      let lowestVal = leftVal;
+      let [curVal, rowId] = cells[0].payload.recordBody.keys;
+      for (let i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        [curVal, rowId] = cell.payload.recordBody.keys;
+        if (value === curVal.value) {
+          res.push(rowId.value)
+        }
+        if (value <= curVal.value && value >= lowestVal) {
+          const nextPage = cell.getLeftChildPageNum();
+          await this.getMatchingIndexHelper(value, curVal.value, res, nextPage);
+        }
+        lowestVal = curVal.value;
+      }
+      if (value >= curVal.value) {
+        const nextPage = page.getRightMostPageNum();
+        await this.getMatchingIndexHelper(value, curVal.value, res, nextPage)
+      }
+    } else if (pageType === INDEX_LEAF_PAGE) {
+      const page = new IndexLeafPage(pageBuffer);
+      const cells = page.getCells();
+      for (let i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        const [curVal, rowId] = cell.payload.recordBody.keys;
+        if (value === curVal.value) {
+          res.push(rowId.value)
+        }
+      }
+    }
+    return res;
+  }
+
+  async getMatchingIndex(value: string) {
+    return await this.getMatchingIndexHelper(value, '', [], this.rootPage!)
+
+  }
 
   async getAllRows() {
     const pageBuffer = await this.getRootPage()
@@ -234,11 +333,9 @@ export class Table {
       await this.getAllRowsFromPage(this.rootPage!)
     } else {
       for (let i = 0; i < allPages.length; i++) {
-        // console.log('pageNum', allPages[i][0])
         await this.getAllRowsFromPage(allPages[i][0])
       }
     }
-    // console.log(this.rows)
     return this.rows;
   }
 
