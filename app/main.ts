@@ -43,12 +43,16 @@ if (parsed[0] === ".dbinfo") {
   const tables = database.tables.filter(table => table.name === tableName);
   // if there is a index table that matches the look up of tableName and filterKey 
   // console.log(tables.)
-  // database.tables.forEach((table) => console.log(table.name))
+  // database.tables.forEach((table) => console.log(table.name, table.rootPage))
+  // console.log(database.tables.forEach(table) => console.log(table.name))
   const indexTable = database.tables.find((table) => table.name === `idx_${tableName}_${filterkey}`)
   if (indexTable !== undefined) {
     let res = await (indexTable.getMatchingIndex(filterVal));
+    // console.log('index table', indexTable?.sql)
     const table = database.tables.find((table) => table.name === tableName);
+    // console.log(filterVal, columns, tableName)
     res.sort((a, b) => a - b);
+    // console.log('res', res);
     const columnNames = table?.getColumnNames(table.sql!)
     // console.log(columnNames)
     const recordBodies = await table?.getRecordOnIds(res);

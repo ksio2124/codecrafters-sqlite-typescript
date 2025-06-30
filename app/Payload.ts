@@ -25,7 +25,7 @@ class RecordHeader {
     const { value: headerSize, offset: headerSizeOffset } = parseSQLiteVarints32(headerSizeBuffer)[0];
     this.headerSize = headerSize;
     const recordHeader = parseSQLiteVarints32(pageBuffer.slice(addr, addr + headerSize));
-
+    // console.log('recordHeader', recordHeader, headerSize, addr)
     this.serialTypes = recordHeader.slice(1).map((val) => val.value);
   }
 }

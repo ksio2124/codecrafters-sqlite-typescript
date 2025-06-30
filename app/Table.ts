@@ -3,10 +3,11 @@ import type { FileHandle } from 'fs/promises';
 import { Row } from './Row';
 import { decodeVarint, parseSQLiteVarints32 } from './helper';
 import { IndexInteriorCell } from './IndexCell';
-import { INDEX_INTERIOR_PAGE, INDEX_LEAF_PAGE, PAGE_TYPE, TABLE_INTERIOR_PAGE, TABLE_LEAF_PAGE } from './const';
+import { INDEX_INTERIOR_PAGE, INDEX_LEAF_PAGE, NUMBER_OF_CELL, PAGE_TYPE, TABLE_INTERIOR_PAGE, TABLE_LEAF_PAGE } from './const';
 import { IndexInteriorPage, IndexLeafPage } from './IndexPage';
 import { RecordBody } from './Payload';
 import { TableInteriorPage, TableLeafPage } from './TablePage';
+import { TableLeafCell } from './TableCell';
 
 export class Table {
   name?: string;
@@ -15,52 +16,31 @@ export class Table {
   rootPage?: number;
   sql?: string;
   record?: Uint8Array;
-  recordBodyPtr?: number;
   type?: string;
-  tblName?: string;
   decoder: TextDecoder;
   rows: Row[];
-  recordHeaderPtr?: number;
-  isIndex: boolean;
-  static LEAF_PAGE_NUMBER_OF_CELL = { position: 3, size: 2 };
-  static LEAF_PAGE_CELL_CONTENT_AREA = { position: 5, size: 2 };
-  static LEAF_PAGE_CELL_ROW_ID = { position: 2, size: 1 };
-  static LEAF_PAGE = 13;
-  static INTERIOR_PAGE = 5;
   constructor(recordPtr: number, database: Database) {
     this.recordPtr = recordPtr;
     this.database = database;
     this.decoder = new TextDecoder();
     this.rows = [];
-    this.isIndex = false;
   }
 
   async init(): Promise<void> {
     if (!this.database.checkInit()) {
       throw new Error("Database not initialized. Call init() first.");
     }
-    [this.record, this.recordHeaderPtr] = await this.getRecord(
-      this.database.databaseFileHandler
-    );
-    const parsed = parseSQLiteVarints32(this.record)
-    const [_, skip, recordHeaderSize, schemaType, nameType, tblNameType] = parsed;
-    this.recordBodyPtr = this.recordHeaderPtr + recordHeaderSize.value;
-    const schemaTypeSize = Table.getSizeFromSerialType(schemaType.value).length;
-    const nameTypeSize = Table.getSizeFromSerialType(nameType.value).length;
-    const namePosition = this.recordBodyPtr + schemaTypeSize;
-    const nameBuffer = new DataView(this.record.buffer, namePosition, nameTypeSize);
 
-    this.name = this.decoder.decode(nameBuffer);
-    const tblNameSize = Table.getSizeFromSerialType(tblNameType.value).length;
-    const rootPagePosition = this.recordBodyPtr + schemaTypeSize + nameTypeSize + tblNameSize;
-    const rootPageType = parsed[6]
-    this.rootPage = new DataView(this.record.buffer, rootPagePosition, rootPageType.value).getInt8(0);
+    let pageBuffer: Uint8Array = new Uint8Array(this.database.pageSize);
+    const databaseFileHandler = this.database.databaseFileHandler
+    await databaseFileHandler.read(pageBuffer, 0, pageBuffer.length, 0);
 
-    const sqlType = parsed[7].value
-    const sqlSize = Table.getSizeFromSerialType(sqlType!).length;
-    const sqlPosition = this.recordBodyPtr + schemaTypeSize + nameTypeSize + tblNameSize + rootPageType.value;
-    const sqlBuffer = new DataView(this.record.buffer, sqlPosition, sqlSize);
-    this.sql = this.decoder.decode(sqlBuffer);
+    const cell = new TableLeafCell(this.recordPtr, pageBuffer);
+    const [_, name, tbl_name, rootPage, sql] = cell.payload.recordBody.keys;
+    // console.log(cell.payload.recordBody);
+    this.name = name.value;
+    this.rootPage = rootPage.value;
+    this.sql = sql.value;
   }
 
   checkInit(): this is Table & {
@@ -134,20 +114,6 @@ export class Table {
   }
 
 
-  async getRecord(databaseFileHandler: FileHandle): Promise<[Uint8Array, number]> {
-    let buffer: Uint8Array = new Uint8Array(9);
-    await databaseFileHandler.read(buffer, 0, buffer.length, this.recordPtr);
-    const parsed = parseSQLiteVarints32(buffer)[0];
-    let recordSize = parsed.value;
-    // varint of recordSize
-    recordSize += parsed.bytesRead;
-    // adding 1 more for beginning of Record
-    recordSize++;
-    buffer = new Uint8Array(recordSize);
-    await databaseFileHandler.read(buffer, 0, buffer.length, this.recordPtr);
-    const recordHeaderPtr = parsed.bytesRead + 1 // rowId
-    return [buffer, recordHeaderPtr];
-  }
 
   getColumnNames(sql: string) {
     const openParenIdx = sql.indexOf('(');
@@ -168,7 +134,7 @@ export class Table {
     let leafPages: [number, number][] = [];
     const view = new DataView(pageBuffer.buffer, 0, pageBuffer.byteLength);
     const pageType = view.getUint8(0);
-    if (pageType === Table.INTERIOR_PAGE) {
+    if (pageType === TABLE_INTERIOR_PAGE) {
       const cellCount = view.getUint16(3);
       const rightMostPointer = view.getUint32(8);
       const cellPtrs = [];
@@ -217,7 +183,7 @@ export class Table {
   async getAllRowsFromPage(pageNum: number) {
     const pageBuffer = await this.getPageBuffer(pageNum);
     const view = new DataView(pageBuffer.buffer, 0, pageBuffer.byteLength);
-    const numberOfRows = view.getUint16(Table.LEAF_PAGE_NUMBER_OF_CELL.position);
+    const numberOfRows = view.getUint16(NUMBER_OF_CELL.offset);
     const cellPtrs = [];
     for (let i = 0; i < numberOfRows; i++) {
       const cellOffset = view.getInt16(8 + i * 2);
@@ -286,6 +252,7 @@ export class Table {
     const pageBuffer = await this.database.getPageBuffer(pageNum);
     const pageView = new DataView(pageBuffer.buffer);
     const pageType = pageView.getUint8(PAGE_TYPE.offset)
+    // console.log('pageType', pageType, this.name, this.rootPage)
     if (pageType === INDEX_INTERIOR_PAGE) {
       const page = new IndexInteriorPage(pageBuffer);
       const cells = page.getCells();
@@ -294,6 +261,7 @@ export class Table {
       for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
         [curVal, rowId] = cell.payload.recordBody.keys;
+        // console.log(curVal.value, cell.getLeftChildPageNum())
         if (value === curVal.value) {
           res.push(rowId.value)
         }
@@ -313,6 +281,7 @@ export class Table {
       for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
         const [curVal, rowId] = cell.payload.recordBody.keys;
+        // console.log(curVal.value)
         if (value === curVal.value) {
           res.push(rowId.value)
         }
