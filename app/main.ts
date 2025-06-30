@@ -28,7 +28,7 @@ if (parsed[0] === ".dbinfo") {
   parsed[1].toUpperCase() === "COUNT(*)"
 ) {
   const tableName = parsed.at(-1);
-  console.log('here', tableName, parsed)
+  // console.log('here', tableName, parsed)
   const table = database.tables.filter((table) => table.name === tableName)[0];
   // console.log(await table.getColumnNames(table.sql!));
   console.log((await table.getAllRows()).length)
