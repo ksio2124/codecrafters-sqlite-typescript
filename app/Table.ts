@@ -1,8 +1,6 @@
 import { Database } from './Database'
-import type { FileHandle } from 'fs/promises';
 import { Row } from './Row';
-import { decodeVarint, parseSQLiteVarints32 } from './helper';
-import { IndexInteriorCell } from './IndexCell';
+import { parseSQLiteVarints32 } from './helper';
 import { INDEX_INTERIOR_PAGE, INDEX_LEAF_PAGE, NUMBER_OF_CELL, PAGE_TYPE, TABLE_INTERIOR_PAGE, TABLE_LEAF_PAGE } from './const';
 import { IndexInteriorPage, IndexLeafPage } from './IndexPage';
 import { RecordBody } from './Payload';
@@ -15,8 +13,6 @@ export class Table {
   database: Database;
   rootPage?: number;
   sql?: string;
-  record?: Uint8Array;
-  type?: string;
   decoder: TextDecoder;
   rows: Row[];
   constructor(recordPtr: number, database: Database) {
@@ -37,7 +33,6 @@ export class Table {
 
     const cell = new TableLeafCell(this.recordPtr, pageBuffer);
     const [_, name, tbl_name, rootPage, sql] = cell.payload.recordBody.keys;
-    // console.log(cell.payload.recordBody);
     this.name = name.value;
     this.rootPage = rootPage.value;
     this.sql = sql.value;
@@ -136,7 +131,6 @@ export class Table {
     const pageType = view.getUint8(0);
     if (pageType === TABLE_INTERIOR_PAGE) {
       const cellCount = view.getUint16(3);
-      const rightMostPointer = view.getUint32(8);
       const cellPtrs = [];
       for (let i = 0; i < cellCount; i++) {
         cellPtrs.push(view.getUint16(12 + i * 2));
@@ -150,7 +144,7 @@ export class Table {
         pages.push([pageNum, rowId]);
       }
       for (let i = 0; i < pages.length; i++) {
-        const pageBuffer = await this.getPageBuffer(pages[i][0]);
+        const pageBuffer = await this.database.getPageBuffer(pages[i][0]);
         const res = await this.getAllPages(pageBuffer);
         if (res === true) {
           leafPages.push(pages[i])
@@ -164,24 +158,8 @@ export class Table {
   }
 
 
-  async getPageBuffer(pageNum: number) {
-    if (!this.database.checkInit()) {
-      throw new Error("Database not initialized. Call init() first.");
-    }
-    if (!this.checkInit()) {
-      throw new Error(
-        "Table does not have a root page. Call init() first."
-      );
-    }
-    const databaseFileHandler = this.database.databaseFileHandler;
-    const buffer = new Uint8Array(this.database.pageSize);
-    const offset = (pageNum - 1) * this.database.pageSize;
-    await databaseFileHandler.read(buffer, 0, buffer.length, offset);
-    return buffer;
-  }
-
   async getAllRowsFromPage(pageNum: number) {
-    const pageBuffer = await this.getPageBuffer(pageNum);
+    const pageBuffer = await this.database.getPageBuffer(pageNum);
     const view = new DataView(pageBuffer.buffer, 0, pageBuffer.byteLength);
     const numberOfRows = view.getUint16(NUMBER_OF_CELL.offset);
     const cellPtrs = [];
@@ -252,7 +230,6 @@ export class Table {
     const pageBuffer = await this.database.getPageBuffer(pageNum);
     const pageView = new DataView(pageBuffer.buffer);
     const pageType = pageView.getUint8(PAGE_TYPE.offset)
-    // console.log('pageType', pageType, this.name, this.rootPage)
     if (pageType === INDEX_INTERIOR_PAGE) {
       const page = new IndexInteriorPage(pageBuffer);
       const cells = page.getCells();
@@ -261,7 +238,6 @@ export class Table {
       for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
         [curVal, rowId] = cell.payload.recordBody.keys;
-        // console.log(curVal.value, cell.getLeftChildPageNum())
         if (value === curVal.value) {
           res.push(rowId.value)
         }
@@ -281,7 +257,6 @@ export class Table {
       for (let i = 0; i < cells.length; i++) {
         const cell = cells[i];
         const [curVal, rowId] = cell.payload.recordBody.keys;
-        // console.log(curVal.value)
         if (value === curVal.value) {
           res.push(rowId.value)
         }
@@ -296,7 +271,7 @@ export class Table {
   }
 
   async getAllRows() {
-    const pageBuffer = await this.getRootPage()
+    const pageBuffer = await this.database.getPageBuffer(this.rootPage!)
     const allPages = await this.getAllPages(pageBuffer);
     if (allPages === true) {
       await this.getAllRowsFromPage(this.rootPage!)
@@ -306,26 +281,5 @@ export class Table {
       }
     }
     return this.rows;
-  }
-
-  async getRootPage() {
-    if (!this.database.checkInit()) {
-      throw new Error("Database not initialized. Call init() first.");
-    }
-    if (!this.checkInit()) {
-      throw new Error(
-        "Table does not have a root page. Call init() first."
-      );
-    }
-    const databaseFileHandler = this.database.databaseFileHandler;
-    const buffer = new Uint8Array(this.database.pageSize);
-    const offset = (this.rootPage - 1) * this.database.pageSize;
-    await databaseFileHandler.read(buffer, 0, buffer.length, offset);
-    return buffer;
-  }
-
-  async getNumberOfRows(): Promise<number> {
-    const pageBuffer = await this.getRootPage();
-    return new DataView(pageBuffer.buffer, 0, pageBuffer.byteLength).getUint16(Table.LEAF_PAGE_NUMBER_OF_CELL.position);
   }
 }
